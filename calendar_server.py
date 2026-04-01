@@ -1,168 +1,203 @@
-import os
-import json
-import uuid
-import requests
-import subprocess
-from datetime import datetime, timedelta
-from typing import Dict, Optional
 from mcp.server.fastmcp import FastMCP
-from dotenv import load_dotenv
+from typing import Dict
+import uuid
+import json
+import os
+from datetime import datetime, timedelta
+import psycopg2
 
-# Load credentials
-load_dotenv()
-
-# Initialize the MCP Server
+# Initialize MCP Server
 mcp = FastMCP("LocalCalendar")
 
 # =====================================================
-# CONFIG & CREDENTIALS
+# ENV + DB CONFIG
 # =====================================================
+RAIL_DB = "postgresql://postgres:GFRjPEYImcWwwfcSArNMJdabKtSVTfkj@caboose.proxy.rlwy.net:30023/railway"
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 DB_FILE = os.path.join(current_dir, "calendar_db.json")
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # =====================================================
-# GIT-OPS LOGIC (CLOUD PERSISTENCE)
+# ✅ FIXED POSTGRES SYNC (NO RESET BUG)
 # =====================================================
+def sync_to_postgres():
+    if not RAIL_DB:
+        print("⚠️ RAIL_DB not set, skipping sync")
+        return
 
-def git_sync_cloud():
-    """
-    Ensures the local calendar data is pushed to GitHub.
-    This is what makes the system work when your laptop is OFF.
-    """
     try:
-        # Check if DB_FILE exists locally first
+        conn = psycopg2.connect(RAIL_DB)
+        cur = conn.cursor()
+
+        # Ensure table exists
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS events (
+            id SERIAL PRIMARY KEY,
+            title TEXT,
+            event_time TIMESTAMP,
+            description TEXT,
+            reminded BOOLEAN DEFAULT FALSE
+        );
+        """)
+
         if not os.path.exists(DB_FILE):
-            return False
+            return
 
-        # Stage the file
-        subprocess.run(["git", "add", DB_FILE], check=True, capture_output=True)
-        
-        # Create commit message
-        commit_msg = f"Sync: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        
-        # Commit changes
-        subprocess.run(["git", "commit", "-m", commit_msg], check=True, capture_output=True)
-        
-        # Push to the 'main' branch
-        subprocess.run(["git", "push", "origin", "main"], check=True, capture_output=True)
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"❌ Git Error: {e.stderr.decode()}")
-        return False
+        with open(DB_FILE, "r") as f:
+            db_data = json.load(f)
+
+        # 🔥 Insert ONLY new events (no delete)
+        for _, info in db_data.items():
+
+            cur.execute("""
+            SELECT id FROM events
+            WHERE title = %s AND event_time = %s;
+            """, (info["title"], info["event_time"]))
+
+            exists = cur.fetchone()
+
+            if not exists:
+                cur.execute("""
+                INSERT INTO events (title, event_time, description, reminded)
+                VALUES (%s, %s, %s, %s);
+                """, (
+                    info["title"],
+                    info["event_time"],
+                    info.get("description", ""),
+                    False
+                ))
+
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        print("☁️ Synced safely (no reminder reset) ✅")
+
+    except Exception as e:
+        print("❌ Postgres Sync Error:", e)
 
 # =====================================================
-# DB UTILS (PRUNING & LOADING)
+# PERSISTENT DATABASE LOGIC
 # =====================================================
-
 def prune_db():
-    """PERMANENTLY wipes events older than 2 days from today."""
     if not os.path.exists(DB_FILE):
-        # Create empty DB if it doesn't exist
-        with open(DB_FILE, "w") as f:
-            json.dump({}, f)
         return
 
     try:
         with open(DB_FILE, "r") as f:
             db = json.load(f)
-    except (json.JSONDecodeError, IOError):
+    except:
         return
 
     now = datetime.now()
     threshold = now - timedelta(days=2)
-    
-    initial_count = len(db)
+
     pruned_db = {}
-    
+
     for eid, info in db.items():
         try:
-            # FIX: Handle '2026-03-26T09:00:00' by splitting at 'T' or ' ' 
-            raw_date = info['date'].replace('T', ' ').split(' ')[0]
-            event_date = datetime.strptime(raw_date, "%Y-%m-%d")
-            
-            if event_date >= threshold:
+            event_time = datetime.strptime(info['event_time'], "%Y-%m-%d %H:%M:%S")
+            if event_time >= threshold:
                 pruned_db[eid] = info
-        except (ValueError, TypeError, KeyError) as e:
-            # If date is weird, keep it rather than crashing
-            print(f"⚠️ Skipping weird date format for {eid}: {e}")
+        except:
             pruned_db[eid] = info
-            
-    if len(pruned_db) < initial_count:
-        with open(DB_FILE, "w") as f:
-            json.dump(pruned_db, f, indent=4)
+
+    with open(DB_FILE, "w") as f:
+        json.dump(pruned_db, f, indent=4)
 
 def load_db() -> Dict[str, dict]:
     prune_db()
     if os.path.exists(DB_FILE):
-        with open(DB_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(DB_FILE, "r") as f:
+                return json.load(f)
+        except:
+            return {}
     return {}
 
-def save_and_sync(db: Dict[str, dict]):
-    """Saves locally and triggers Git push."""
+def save_db(data: Dict[str, dict]):
     with open(DB_FILE, "w") as f:
-        json.dump(db, f, indent=4)
-    return git_sync_cloud()
+        json.dump(data, f, indent=4)
+
+    prune_db()
+    sync_to_postgres()
 
 # =====================================================
-# FULL CRUD TOOLS
+# SMART TOOLS
 # =====================================================
-
 @mcp.tool()
-def add_event(title: str, date: str, time_str: str, description: str = "") -> str:
-    """CREATE: Adds a new event and pushes to GitHub for offline reminders."""
+def add_event(title: str, event_time: str, description: str = "") -> str:
     db = load_db()
+
+    try:
+        datetime.strptime(event_time, "%Y-%m-%d %H:%M:%S")
+    except:
+        return "❌ Invalid format. Use YYYY-MM-DD HH:MM:SS"
+
     event_id = str(uuid.uuid4())[:8]
+
     db[event_id] = {
-        "title": title, 
-        "date": date, 
-        "time": time_str, 
-        "description": description, 
-        "notified": False
+        "title": title,
+        "event_time": event_time,
+        "description": description
     }
-    sync = save_and_sync(db)
-    status = "Synced to Cloud ☁️" if sync else "Local Only 💻 (Check Git Setup)"
-    return f"✅ Event '{title}' added. Status: {status}"
+
+    save_db(db)
+    return f"✅ Event '{title}' added at {event_time}"
 
 @mcp.tool()
 def get_events() -> str:
-    """READ: Returns all active events."""
     db = load_db()
-    if not db: return "Calendar is empty."
-    lines = [f"ID: {eid} | {info['date']} {info.get('time','')} | {info['title']}" for eid, info in db.items()]
-    return "📅 Current Schedule:\n" + "\n".join(lines)
+    if not db:
+        return "No events available."
 
-@mcp.tool()
-def update_event(event_id: str, title: str = None, date: str = None, time_str: str = None, description: str = None) -> str:
-    """UPDATE: Modifies an event and re-syncs to Cloud."""
-    db = load_db()
-    if event_id not in db:
-        return f"❌ Error: ID {event_id} not found."
-    
-    if title: db[event_id]['title'] = title
-    if date: db[event_id]['date'] = date
-    if time_str: db[event_id]['time'] = time_str
-    if description: db[event_id]['description'] = description
-    
-    # Reset notified so the Worker checks the new time
-    db[event_id]['notified'] = False
-    
-    sync = save_and_sync(db)
-    return f"✅ Updated ID {event_id}. Cloud Sync: {'Success' if sync else 'Failed'}"
+    sorted_items = sorted(db.items(), key=lambda x: x[1]['event_time'])
+
+    lines = []
+    for eid, info in sorted_items:
+        lines.append(f"{eid} | {info['event_time']} | {info['title']}")
+
+    return "\n".join(lines)
 
 @mcp.tool()
 def delete_event(event_id: str) -> str:
-    """DELETE: Removes an event and updates the Cloud JSON."""
     db = load_db()
+
     if event_id in db:
         title = db[event_id]['title']
         del db[event_id]
-        sync = save_and_sync(db)
-        return f"🗑️ Deleted: {title}. Cloud Sync: {'Success' if sync else 'Failed'}"
-    return f"❌ Error: ID {event_id} not found."
+        save_db(db)
+        return f"🗑️ Deleted: {title}"
 
+    return "❌ Not found"
+
+@mcp.tool()
+def update_event(event_id: str, title: str = None, event_time: str = None, description: str = None) -> str:
+    db = load_db()
+
+    if event_id not in db:
+        return "❌ Not found"
+
+    if title:
+        db[event_id]['title'] = title
+
+    if event_time:
+        try:
+            datetime.strptime(event_time, "%Y-%m-%d %H:%M:%S")
+            db[event_id]['event_time'] = event_time
+        except:
+            return "❌ Invalid time format"
+
+    if description:
+        db[event_id]['description'] = description
+
+    save_db(db)
+    return "✅ Updated"
+
+# =====================================================
+# RUN SERVER
+# =====================================================
 if __name__ == "__main__":
     prune_db()
+    sync_to_postgres()
     mcp.run(transport='stdio')
