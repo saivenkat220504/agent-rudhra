@@ -30,6 +30,7 @@ def _reset_exam():
 
     keys = [
         "questions",
+        "mcq_questions",
         "current_q_idx",
         "results",
         "submitted",
@@ -91,8 +92,8 @@ def count_pages_in_files(uploaded_files):
 # QUESTION GENERATION
 # ==========================================================
 
-def extract_questions_from_files(uploaded_files, num_questions):
-
+def _extract_all_pages(uploaded_files):
+    """Common helper to extract text pages from uploaded files."""
     all_pages = []
 
     for file in uploaded_files:
@@ -144,6 +145,13 @@ def extract_questions_from_files(uploaded_files, num_questions):
                 if slide_text.strip():
                     all_pages.append(slide_text.strip())
 
+    return all_pages
+
+
+def extract_questions_from_files(uploaded_files, num_questions):
+
+    all_pages = _extract_all_pages(uploaded_files)
+
     if not all_pages:
         return []
 
@@ -181,6 +189,106 @@ Format:
         questions.append(question)
 
     return questions
+
+
+# ==========================================================
+# MCQ QUESTION GENERATION
+# ==========================================================
+
+def extract_mcq_questions_from_files(uploaded_files, num_questions):
+    """Generate MCQ questions with 4 options and a correct answer."""
+
+    all_pages = _extract_all_pages(uploaded_files)
+
+    if not all_pages:
+        return []
+
+    selected_pages = random.sample(
+        all_pages,
+        min(num_questions, len(all_pages))
+    )
+
+    mcq_list = []
+
+    for idx, page_text in enumerate(selected_pages, start=1):
+
+        prompt = f"""
+Generate ONE multiple-choice question (MCQ) from the following content.
+
+Content:
+{page_text[:3000]}
+
+You MUST return EXACTLY this format (no extra text):
+Q: <question text>
+A) <option A>
+B) <option B>
+C) <option C>
+D) <option D>
+CORRECT: <letter>
+"""
+
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=250
+        )
+
+        raw = response.choices[0].message.content.strip()
+        mcq = _parse_mcq(raw, idx)
+
+        if mcq:
+            mcq_list.append(mcq)
+
+    return mcq_list
+
+
+def _parse_mcq(raw_text: str, idx: int) -> dict:
+    """Parse LLM output into a structured MCQ dict."""
+
+    lines = [l.strip() for l in raw_text.strip().splitlines() if l.strip()]
+
+    question = ""
+    options = {}
+    correct = ""
+
+    for line in lines:
+
+        if line.upper().startswith("Q:"):
+            question = line[2:].strip()
+
+        elif line.upper().startswith("A)") or line.upper().startswith("A."):
+            options["A"] = line[2:].strip()
+
+        elif line.upper().startswith("B)") or line.upper().startswith("B."):
+            options["B"] = line[2:].strip()
+
+        elif line.upper().startswith("C)") or line.upper().startswith("C."):
+            options["C"] = line[2:].strip()
+
+        elif line.upper().startswith("D)") or line.upper().startswith("D."):
+            options["D"] = line[2:].strip()
+
+        elif line.upper().startswith("CORRECT:"):
+            correct = line.split(":", 1)[1].strip().upper()
+            # Handle cases like "CORRECT: A)" or "CORRECT: A"
+            correct = correct.replace(")", "").replace(".", "").strip()
+
+    if not question or len(options) < 4 or correct not in ["A", "B", "C", "D"]:
+        # Fallback: return a simple placeholder so exam isn't broken
+        return {
+            "index": idx,
+            "question": question or raw_text,
+            "options": options if len(options) == 4 else {"A": "Option A", "B": "Option B", "C": "Option C", "D": "Option D"},
+            "correct": correct if correct in ["A", "B", "C", "D"] else "A"
+        }
+
+    return {
+        "index": idx,
+        "question": question,
+        "options": options,
+        "correct": correct
+    }
 
 
 # ==========================================================
@@ -269,12 +377,13 @@ Instructions for the exam :-
 4. in case of text exam mode, you need to type the answer using your keyboard
 5. in case of image exam mode , you need to write the answer on your note book with pen and upload the neat image of it to the system
 6. in case of image exam mode, please maintain neat handwritting
+7. in case of MCQ exam mode, you will be given 4 options for each question – select the correct one
 """)
     total_pages=st.session_state.total_pages
 
     eval_mode=st.radio(
         "Evaluation Type",
-        ["Text","Image (Handwritten)"]
+        ["Text","Image (Handwritten)","MCQ"]
     )
 
     num_q=st.number_input(
@@ -295,12 +404,21 @@ Instructions for the exam :-
 
         with st.spinner("Generating questions..."):
 
-            qs=extract_questions_from_files(
-                st.session_state.uploaded_files,
-                int(num_q)
-            )
+            if eval_mode == "MCQ":
+                mcq_qs = extract_mcq_questions_from_files(
+                    st.session_state.uploaded_files,
+                    int(num_q)
+                )
+                st.session_state.mcq_questions = mcq_qs
+                st.session_state.questions = [m["question"] for m in mcq_qs]
+            else:
+                qs = extract_questions_from_files(
+                    st.session_state.uploaded_files,
+                    int(num_q)
+                )
+                st.session_state.questions = qs
+                st.session_state.mcq_questions = []
 
-        st.session_state.questions=qs
         st.session_state.eval_mode=eval_mode
         st.session_state.time_limit=int(time_limit)
         st.session_state.current_q_idx=0
@@ -351,8 +469,28 @@ def _render_exam():
 
     time_up=remaining<=0
 
-    # TEXT / IMAGE INPUT
-    if st.session_state.eval_mode=="Image (Handwritten)":
+    # TEXT / IMAGE / MCQ INPUT
+    if st.session_state.eval_mode=="MCQ":
+
+        mcq_data = st.session_state.mcq_questions[q_idx]
+        opts = mcq_data["options"]
+
+        radio_key = f"mcq_radio_{q_idx}"
+
+        option_labels = [f"{key}) {val}" for key, val in opts.items()]
+
+        selected = st.radio(
+            "Select your answer:",
+            option_labels,
+            index=None,
+            key=radio_key,
+            disabled=time_up
+        )
+
+        # Extract the letter from "A) some text"
+        user_ans = selected.split(")")[0].strip() if selected else ""
+
+    elif st.session_state.eval_mode=="Image (Handwritten)":
 
         img=st.file_uploader(
             "Upload handwritten answer",
@@ -400,18 +538,36 @@ def _render_exam():
     # SUBMIT
     if st.button("Submit Answer",key=f"submit_{q_idx}"):
 
-        if not user_ans.strip():
+        if st.session_state.eval_mode == "MCQ":
+            # ---- MCQ AUTO-GRADING ----
+            mcq_data = st.session_state.mcq_questions[q_idx]
+            correct_letter = mcq_data["correct"]
+            correct_text = mcq_data["options"].get(correct_letter, "")
 
-            evaluation="Score: 0/10\nFeedback: No answer."
-            score="Score: 0/10"
+            if not user_ans.strip() or time_up:
+                score = "Score: 0/10"
+                evaluation = f"Score: 0/10\nFeedback: No answer submitted.\nCorrect Answer: {correct_letter}) {correct_text}"
+            elif user_ans.strip().upper() == correct_letter:
+                score = "Score: 10/10"
+                evaluation = f"Score: 10/10\nFeedback: ✅ Correct! The answer is {correct_letter}) {correct_text}"
+            else:
+                score = "Score: 0/10"
+                evaluation = f"Score: 0/10\nFeedback: ❌ Incorrect. You selected {user_ans}). The correct answer is {correct_letter}) {correct_text}"
 
         else:
+            # ---- TEXT / IMAGE EVALUATION ----
+            if not user_ans.strip():
 
-            with st.spinner("Evaluating..."):
-                evaluation=evaluate_answer_improved(curr_q,user_ans)
+                evaluation="Score: 0/10\nFeedback: No answer."
+                score="Score: 0/10"
 
-            score_line=[l for l in evaluation.split("\n") if "Score:" in l]
-            score=score_line[0] if score_line else "Score: 0/10"
+            else:
+
+                with st.spinner("Evaluating..."):
+                    evaluation=evaluate_answer_improved(curr_q,user_ans)
+
+                score_line=[l for l in evaluation.split("\n") if "Score:" in l]
+                score=score_line[0] if score_line else "Score: 0/10"
 
         st.session_state.results.append({
             "Q#":q_idx+1,
@@ -442,6 +598,7 @@ def run_exam_mode():
     defaults = {
         "exam_step":"upload",
         "questions":[],
+        "mcq_questions":[],
         "current_q_idx":0,
         "results":[],
         "start_time":None,

@@ -11,6 +11,12 @@
             "content_hash": "7803dda0eda727fed35994e62bc1051b953bb66804426becded8dd0cb6c158f1",
             "vector_db_path": "index\\7803dda0eda727fed35994e62bc1051b953bb66804426becded8dd0cb6c158f1",
             "upload_date": "2026-03-22 16:39:55"
+        },
+        {
+            "source_filename": "ThinkGpt.pdf",
+            "content_hash": "f1569b58ad101ad63bcfb05c54036efb2ed515f1466193682be7f4935c75aad1",
+            "vector_db_path": "index\\f1569b58ad101ad63bcfb05c54036efb2ed515f1466193682be7f4935c75aad1",
+            "upload_date": "2026-04-04 21:32:28"
         }
     ]
 }

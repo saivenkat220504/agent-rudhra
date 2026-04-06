@@ -2,8 +2,10 @@ from typing import TypedDict
 import os
 import cv2
 import requests
+import base64
 from dotenv import load_dotenv
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from langgraph.graph import StateGraph, END
 
 
@@ -30,67 +32,35 @@ if not OCR_API_KEY:
 llm = ChatOpenAI(
     api_key=OPENAI_API_KEY,
     base_url="https://openrouter.ai/api/v1",
-    model="gpt-3.5-turbo",
+    model="openai/gpt-4o-mini",
     temperature=0,
-    max_tokens=1000
+    max_tokens=2000
 )
 
 
 # ==================================================
-# IMAGE PREPROCESSING
+# VISION OCR (GPT-4o-mini)
 # ==================================================
-def preprocess_image(path: str) -> str:
+def encode_image(image_path: str) -> str:
+    with open(image_path, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode('utf-8')
 
-    img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-
-    img = cv2.resize(
-        img,
-        None,
-        fx=2,
-        fy=2,
-        interpolation=cv2.INTER_CUBIC
+def vision_ocr_extract(image_path: str) -> str:
+    """Uses GPT-4o-mini to extract handwritten text from an image."""
+    base64_image = encode_image(image_path)
+    
+    message = HumanMessage(
+        content=[
+            {"type": "text", "text": "Extract all text from this handwritten exam answer. Provide only the extracted text, no explanations or headers."},
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"},
+            },
+        ]
     )
-
-    img = cv2.GaussianBlur(img, (5, 5), 0)
-
-    _, img = cv2.threshold(
-        img,
-        0,
-        255,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
-
-    processed_path = "processed_temp.png"
-
-    cv2.imwrite(processed_path, img)
-
-    return processed_path
-
-
-# ==================================================
-# OCR USING OCR.SPACE
-# ==================================================
-def ocr_space_extract(image_path: str) -> str:
-
-    with open(image_path, "rb") as f:
-
-        response = requests.post(
-            OCR_URL,
-            files={"file": f},
-            data={
-                "apikey": OCR_API_KEY,
-                "language": "eng",
-                "isOverlayRequired": False,
-                "OCREngine": 2
-            }
-        )
-
-    result = response.json()
-
-    if "ParsedResults" not in result:
-        raise RuntimeError("OCR failed")
-
-    return result["ParsedResults"][0]["ParsedText"].strip()
+    
+    response = llm.invoke([message])
+    return response.content.strip()
 
 
 # ==================================================
@@ -98,6 +68,7 @@ def ocr_space_extract(image_path: str) -> str:
 # ==================================================
 class EvalState(TypedDict):
     image_path: str
+    question: str
     extracted_text: str
     evaluation: str
 
@@ -106,11 +77,8 @@ class EvalState(TypedDict):
 # OCR NODE
 # ==================================================
 def ocr_node(state: EvalState):
-
-    processed_img = preprocess_image(state["image_path"])
-
-    text = ocr_space_extract(processed_img)
-
+    """Bypasses traditional OCR and uses GPT-4o-vision for better results."""
+    text = vision_ocr_extract(state["image_path"])
     return {"extracted_text": text}
 
 
@@ -118,25 +86,10 @@ def ocr_node(state: EvalState):
 # CLEANUP NODE
 # ==================================================
 def cleanup_node(state: EvalState):
-
-    prompt = f"""
-You are correcting OCR output from a handwritten exam answer.
-
-Rules:
-- Fix spelling and grammar
-- Preserve technical terms (A*, g(n), h(n), f(n))
-- Do NOT add new information
-- Do NOT remove content
-
-OCR Text:
-{state['extracted_text']}
-
-Cleaned Answer:
-"""
-
-    response = llm.invoke(prompt)
-
-    return {"extracted_text": response.content.strip()}
+    """Redundant since GPT-4o-mini handles OCR cleanly, but kept for flow."""
+    if not state["extracted_text"]:
+        return {"extracted_text": ""}
+    return {"extracted_text": state["extracted_text"]}
 
 
 # ==================================================
@@ -145,24 +98,34 @@ Cleaned Answer:
 def evaluation_node(state: EvalState):
 
     prompt = f"""
-You are a strict exam evaluator.
+You are an expert exam evaluator.
 
 Question:
-What is the A* search algorithm?
+{state['question']}
 
 Student Answer:
 {state['extracted_text']}
 
+Instructions:
+1. First, generate the IDEAL CORRECT ANSWER for the question based on your general knowledge and the context of an academic exam.
+2. Compare the student's answer with the ideal answer.
+3. Be fair but strict. Assign a score out of 5 based on key concepts covered.
+4. In the Feedback, you MUST include:
+   - "Correct Answer: [Provide the ideal answer here]"
+   - "Explanation: [Explain why the student's answer was correct or incorrect, and highlight missing concepts if any]"
+
 Evaluation rules:
-- Incorrect answer → score 0-2
-- Partially correct → 3-4
-- Mostly correct → 5
-- Must penalize wrong concepts
+- Incorrect or Empty answer → score 0
+- Partially correct → 1-3
+- Mostly correct → 4
+- Fully correct → 5
 
 Return format:
 
 Score: X/5
-Feedback: Short explanation
+Feedback: 
+Correct Answer: [Ideal Answer]
+Explanation: [Detailed explanation]
 """
 
     response = llm.invoke(prompt)
@@ -207,10 +170,11 @@ if __name__ == "__main__":
 # ==================================================
 # PUBLIC FUNCTION FOR FRONTEND
 # ==================================================
-def evaluate_image_answer(image_path: str):
+def evaluate_image_answer(image_path: str, question: str):
 
     result = app.invoke({
-        "image_path": image_path
+        "image_path": image_path,
+        "question": question
     })
 
     return {

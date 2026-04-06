@@ -5,9 +5,15 @@
 __pycache__/
 *.pyc
 
-# 🧪 Virtual environments (just in case)
+# 🧪 Virtual environments
 venv/
 .env/
+myenv/
+.venv/
+
+# 🏗️ Web project build artifacts
+rudhra-ui/node_modules/
+rudhra-ui/.next/
 
 # 🗄️ Database files
 *.db

@@ -26,7 +26,7 @@ from image_gen import generate_image
 from db_bck import DatabaseManager, get_checkpointer  # Persistent DB Layer
 
 # Updated Import to resolve Rename Warning
-from ddgs import DDGS
+from tavily import TavilyClient
 
 # =====================================================
 # ENV VALIDATION
@@ -34,9 +34,10 @@ from ddgs import DDGS
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY")
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 
-if not all([OPENAI_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY]):
-    raise ValueError("Missing API Keys (OpenAI, Gemini, or NVIDIA) in .env file.")
+if not all([OPENAI_API_KEY, GEMINI_API_KEY, NVIDIA_API_KEY, TAVILY_API_KEY]):
+    raise ValueError("Missing API Keys (OpenAI, Gemini, NVIDIA, or Tavily) in .env file.")
 
 db_manager = DatabaseManager()
 
@@ -68,27 +69,42 @@ def generate_image_tool(prompt: str) -> str:
 def web_search_tool(query: str) -> str:
     """
     Search the web for the latest information, news, and real-time data.
-    Use this for any events or facts occurring after October 2023.
+    Uses Tavily API for highly accurate, hallucination-free direct extraction.
     """
-    try:
-        current_year = datetime.now().year
-        # Optimization: Append current year to query for freshness
-        search_query = query if str(current_year) in query else f"{query} {current_year}"
+    if not TAVILY_API_KEY:
+        return "❌ Search failed: TAVILY_API_KEY is missing."
         
-        with DDGS() as ddgs:
-            # text() returns a list of dicts in the latest ddgs version
-            results = [r for r in ddgs.text(search_query, max_results=6)]
+    print(f"DEBUG LOG: [web_search_tool] Called with query: '{query}'")
+    try:
+        client = TavilyClient(api_key=TAVILY_API_KEY)
+        response = client.search(
+            query=query,
+            search_depth="advanced",
+            max_results=10,
+            include_answer=False, # Disable synthesized answer to avoid stale/cached AI summaries
+            include_raw_content=True,
+            include_images=False,
+        )
+
+        results = response.get("results", [])
+        
+        print(f"DEBUG LOG: [web_search_tool] Data source used: Tavily. Results found: {len(results)}. Timestamp: {datetime.now().isoformat()}")
         
         if not results:
-            return "No recent web results found."
+            return "Unable to fetch latest data right now. Please try again."
 
         formatted = []
         for i, r in enumerate(results, 1):
-            formatted.append(f"SOURCE [{i}]: {r.get('title')}\nURL: {r.get('href')}\nCONTENT: {r.get('body')}")
-        
+            source_info = f"SOURCE [{i}]: {r.get('title')}\nURL: {r.get('url')}\nCONTENT: {r.get('content')}"
+            if r.get('published_date'):
+                 source_info += f"\nPUBLISHED DATE: {r.get('published_date')}"
+            formatted.append(source_info)
+
         return "\n\n---\n\n".join(formatted)
+
     except Exception as e:
-        return f"❌ Search failed: {str(e)}"
+        print(f"DEBUG LOG: [web_search_tool] Search failed: {str(e)}")
+        return "Unable to fetch latest data right now. Please try again."
 
 # =====================================================
 # AGENT
@@ -98,7 +114,7 @@ class UnifiedAgent:
         self.llm = ChatOpenAI(
             api_key=OPENAI_API_KEY,
             base_url="https://openrouter.ai/api/v1",
-            model="gpt-4o-mini",
+            model="openai/gpt-4o-mini",
             temperature=0.1,
             max_tokens=2048,
         )
@@ -111,14 +127,15 @@ class UnifiedAgent:
     async def initialize(self):
         github_tools = [tool(func) for func in GITHUB_FUNCTIONS.values()]
 
+        import sys
         self.mcp_client = MultiServerMCPClient({
             "local_calendar": {
-                "command": "python",
+                "command": sys.executable,
                 "args": ["calendar_server.py"],
                 "transport": "stdio",
             },
             "filesystem": {
-                "command": "python",
+                "command": sys.executable,
                 "args": ["filesystem_server.py"],
                 "transport": "stdio",
             }
@@ -130,7 +147,7 @@ class UnifiedAgent:
         self.tools_map = {t.name: t for t in all_tools}
         self.llm_with_tools = self.llm.bind_tools(all_tools)
 
-        print(f"🛠️ AGENT INITIALIZED: Found {len(self.tools_map)} total tools.")
+        print(f"[AGENT] INITIALIZED: Found {len(self.tools_map)} total tools.")
 
         graph = StateGraph(ChatState)
         graph.add_node("agent_node", self.agent_node)
@@ -154,24 +171,47 @@ class UnifiedAgent:
         current_date_str = now_dt.strftime("%A, %B %d, %Y, %I:%M %p")
         cutoff_date = "October 2023"
 
-        # UPDATED: DESCRIPTIVE & ANALYTICAL PROMPT
+        # REAL-TIME TRIGGER CHECK
+        real_time_keywords = ["latest", "today", "current", "2026", "now", "updated"]
+        last_user_query = ""
+        for m in reversed(full_messages):
+            if hasattr(m, "content") and not isinstance(m, (SystemMessage, AIMessage, ToolMessage)):
+                last_user_query = str(m.content).lower()
+                break
+        
+        is_real_time_query = any(kw in last_user_query for kw in real_time_keywords)
+
+        # UPDATED: DESCRIPTIVE & ANALYTICAL PROMPT WITH REAL-TIME ENFORCEMENT & VERIFICATION
         sys_msg = SystemMessage(
             content=(
                 f"### CORE ROLE\n"
-                f"You are a professional AI Research Assistant. Today is {current_date_str}.\n\n"
+                f"You are a professional AI Research & Operations Assistant. Today is {current_date_str}.\n\n"
                 
-                f"### KNOWLEDGE & TIME CONSTRAINTS\n"
+                f"### REAL-TIME DATA ENFORCEMENT (CRITICAL)\n"
+                f"- **STRICT RULE**: For any query involving news, sports results (IPL 2026), stocks, or weather, you MUST use 'web_search_tool'.\n"
+                f"- **QUERY FORMULATION**: Always include the current year (2026) and today's date in your search queries to force engines to find the latest data.\n"
+                f"- **DATE VERIFICATION**: You MUST cross-check the 'PUBLISHED DATE' or content year in search snippets. If you only find old data (e.g. 2024/2025), inform the user: 'I could only find data up to 2025; 2026 updates may not be available yet.'\n"
+                f"- **NO STALE ANSWERS**: Do NOT reuse cached, hardcoded, or training-based responses. If the tool fails or results are stale, admit it. Never guess.\n"
+                f"- **RESPONSE PREFIX**: Every response MUST begin with: 'As of {current_date_str}, here is the latest data:' followed by your findings.\n\n"
+
+                f"### KNOWLEDGE & CAPABILITIES\n"
                 f"- Internal knowledge cutoff: {cutoff_date}.\n"
-                f"- For any facts, news, or technical releases after {cutoff_date}, you MUST use 'web_search_tool'.\n\n"
+                f"- **Web Search**: Use 'web_search_tool' for all post-cutoff events. You have access to 10 deep search results per call.\n"
+                f"- **GitHub**: List/analyze saivenkat2024's repos/code.\n"
+                f"- **Operations**: Manage 'local_calendar' and 'filesystem' via MCP tools.\n"
+                f"- **Visuals**: Generate images via 'generate_image_tool'.\n\n"
                 
-                f"### OPERATIONAL GUIDELINES (DESCRIPTIVE MODE)\n"
-                f"- **Comprehensive Synthesis**: Do not just list snippets. Analyze all provided search results and combine them into a detailed, cohesive narrative.\n"
-                f"- **Depth of Information**: If asked about a version or event, include release dates, major features, context, and implications.\n"
-                f"- **Structured Layout**: Use Markdown headers (###), bold text, and bullet points for high readability.\n"
-                f"- **Citations**: Cite every factual claim using [1], [2], etc., corresponding to the search source index.\n"
-                f"- **Tone**: Maintain a professional, helpful, and grounded tone. Prioritize accuracy over brevity."
+                f"### OPERATIONAL GUIDELINES\n"
+                f"- **Tool First**: Use corresponding tools immediately for GitHub, files, or schedule queries.\n"
+                f"- **Comprehensive Synthesis**: Combine multi-source results into a detailed narrative with analytical depth.\n"
+                f"- **Structured Layout**: Use Markdown headers (###), bold text, and bullet points.\n"
+                f"- **Citations**: Cite every factual claim using [1], [2], etc.\n"
+                f"- **Tone**: Professional, authoritative, and realistic."
             )
         )
+
+        if is_real_time_query:
+            messages.append(SystemMessage(content=f"URGENT: This query requires fresh 2026 data. Formula a search query that includes 'IPL 2026' and today's date '{current_date_str}'. Verify that the results actually relate to 2026. Do NOT guess."))
 
         if image_bytes:
             image_context = self.analyze_image(image_bytes)
@@ -192,7 +232,7 @@ class UnifiedAgent:
                 args = call.get("args", {})
                 cid = call["id"]
 
-                print(f"🚀 AGENT CALLING TOOL: {name}")
+                print(f"[AGENT] CALLING TOOL: {name}")
 
                 if name not in self.tools_map:
                     messages.append(ToolMessage(content="Tool not found", tool_call_id=cid))
@@ -213,7 +253,7 @@ class UnifiedAgent:
 
                     messages.append(ToolMessage(content=str(result), tool_call_id=cid))
                 except Exception as e:
-                    print(f"🔥 TOOL ERROR: {e}")
+                    print(f"[TOOL] ERROR: {e}")
                     messages.append(ToolMessage(content=str(e), tool_call_id=cid))
 
             steps += 1
@@ -245,18 +285,20 @@ class UnifiedAgent:
         if not audio_bytes: return None
         try:
             res = self.genai_client.models.generate_content(
-                model="gemini-flash-latest",
-                contents=[types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"), "Transcribe exactly."]
+                model="gemini-2.5-flash",
+                contents=[types.Part.from_bytes(data=audio_bytes, mime_type="audio/webm"), "Transcribe exactly."]
             )
             return res.text.strip()
-        except: return None
+        except Exception as e:
+            print(f"Transcription error: {e}")
+            return None
 
 def generate_chat_title(text: str) -> str:
     try:
         llm = ChatOpenAI(
             api_key=OPENAI_API_KEY,
             base_url="https://openrouter.ai/api/v1",
-            model="gpt-4o-mini",
+            model="openai/gpt-4o-mini",
             temperature=0.2,
             max_tokens=20,
         )

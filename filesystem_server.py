@@ -7,9 +7,20 @@ from mcp.server.fastmcp import FastMCP
 mcp = FastMCP("filesystem")
 
 # --- MULTI-DIRECTORY CONFIGURATION ---
-# We use absolute paths for Sunita's system folders
-DESKTOP_ROOT = Path(r"C:\Users\Sunita\Desktop").resolve()
-DOCUMENTS_ROOT = Path(r"C:\Users\Sunita\Documents").resolve()
+def get_desktop_path():
+    onedrive_p = os.path.join(os.path.expanduser("~"), "OneDrive", "Desktop")
+    if os.path.exists(onedrive_p): return Path(onedrive_p).resolve()
+    p = os.path.join(os.path.expanduser("~"), "Desktop")
+    return Path(p).resolve()
+
+def get_documents_path():
+    onedrive_p = os.path.join(os.path.expanduser("~"), "OneDrive", "Documents")
+    if os.path.exists(onedrive_p): return Path(onedrive_p).resolve()
+    p = os.path.join(os.path.expanduser("~"), "Documents")
+    return Path(p).resolve()
+
+DESKTOP_ROOT = get_desktop_path()
+DOCUMENTS_ROOT = get_documents_path()
 PROJECT_ROOT = Path(".").resolve()
 
 ALLOWED_ROOTS = [
