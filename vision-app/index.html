@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vision App – Real-Time Hand & Face Tracking</title>
+  <meta name="description" content="Real-time computer vision application with hand tracking, face detection, elastic band physics, and neon visual effects powered by MediaPipe." />
+
+  <!-- MediaPipe Dependencies -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+
+  <div id="app-container">
+
+    <!-- Video & Canvas -->
+    <div id="video-wrapper">
+      <video id="camera-feed" autoplay playsinline></video>
+      <canvas id="render-canvas"></canvas>
+
+      <!-- HUD Bar -->
+      <div id="hud-bar">
+        <span class="logo">VISION</span>
+        <span class="hud-divider"></span>
+        <div class="hud-stat">
+          <span>FPS</span>
+          <span class="value" id="fps-value">--</span>
+        </div>
+        <span class="hud-divider"></span>
+        <div class="hud-stat">
+          <span class="dot" id="hand-dot"></span>
+          <span>HANDS</span>
+          <span class="value" id="hand-status">0/2</span>
+        </div>
+        <span class="hud-divider"></span>
+        <div class="hud-stat">
+          <span class="dot inactive" id="face-dot"></span>
+          <span>FACE</span>
+          <span class="value" id="face-status">OFF</span>
+        </div>
+      </div>
+
+      <!-- Bottom Tension Bar -->
+      <div id="bottom-bar">
+        <span id="tension-label">TENSION 0%</span>
+        <div id="tension-bar-wrapper">
+          <div id="tension-bar"></div>
+        </div>
+      </div>
+
+      <!-- Loading Overlay -->
+      <div id="loading-overlay">
+        <div class="spinner"></div>
+        <span id="loading-text">INITIALIZING...</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Main App Script (ES Module) -->
+  <script type="module" src="js/main.js"></script>
+
+</body>
+</html>

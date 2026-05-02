@@ -71,6 +71,8 @@ class DatabaseManager:
                         );
                     """)
                     cur.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_content_fts ON chat_messages USING GIN (to_tsvector('english', content));")
+                    
+
                     conn.commit()
                 print("[DB] Database Schema Initialized & Migrated.")
         except Exception as e:
@@ -283,6 +285,10 @@ class DatabaseManager:
         except Exception as e:
             print(f"Error fetching image {attachment_id}: {e}")
             return None
+
+            return None
+
+
 
 # --------------------------------------------------
 # LANGGRAPH PERSISTENCE FACTORY

@@ -151,6 +151,7 @@ export default function HomePage() {
       {showPersonalization && (
         <Personalization onClose={() => setShowPersonalization(false)} />
       )}
+
     </>
   );
 }

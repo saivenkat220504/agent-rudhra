@@ -141,7 +141,7 @@ async def rag_qry(body: dict):
         rag_response = ""
         try:
             vdb = await asyncio.to_thread(FAISS.load_local, vdb_path, rag_embeddings, allow_dangerous_deserialization=True)
-            docs = await asyncio.to_thread(vdb.similarity_search, q, k=3)
+            docs = await asyncio.to_thread(vdb.similarity_search, q, k=5)
             
             web_context = ""
             tool_keywords = ["latest", "news", "today", "price", "stock", "live", "ipl", "score", "current", "real-time", "search", "find", "who is", "what is"]
@@ -521,6 +521,109 @@ async def mindmap_generate(body: MindMapRequest):
 async def get_mindmap_url():
     # Constant URL corresponding to the deployed React Frontend for the Mind Map
     return {"url": "https://mindmap-frontend-production-abc2.up.railway.app"}
+
+
+class TranslateRequest(BaseModel):
+    text: str
+    target_language: str
+
+@api_router.post("/chat/translate")
+async def chat_translate(body: TranslateRequest):
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage
+        sys_msg = SystemMessage(content=f"You are a professional translator. Translate the following text into {body.target_language}. Maintain the original markdown formatting. Do not add any conversational filler.")
+        res = await FAST_LLM.ainvoke([sys_msg, HumanMessage(content=body.text)])
+        return {"translated_text": res.content}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ── Plan & Study ──────────────────────────────────────────────────────────────
+from plan_study_db import (
+    init_plan_schema,
+    db_get_all_plans, db_create_plan, db_delete_plan,
+    db_create_subject, db_delete_subject,
+    db_create_chapter, db_delete_chapter,
+)
+
+@app.on_event("startup")
+async def init_plan_study_schema():
+    await asyncio.to_thread(init_plan_schema)
+
+from typing import Optional, Union, List
+
+class PlanCreateRequest(BaseModel):
+    plan_name: str
+    num_days: int
+    subjects: list
+
+class SubjectCreateRequest(BaseModel):
+    plan_id: Optional[Union[int, str]] = None
+    subject_name: str
+    chapters: list
+
+class ChapterCreateRequest(BaseModel):
+    subject_id: str
+    chapter_name: str
+    deadline: str
+
+@api_router.get("/plans")
+async def get_plans():
+    try:
+        plans = await asyncio.to_thread(db_get_all_plans)
+        return plans
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+@api_router.post("/plans")
+async def create_plan(body: PlanCreateRequest):
+    if not body.plan_name.strip():
+        raise HTTPException(400, "Plan name is required")
+    if body.num_days <= 0:
+        raise HTTPException(400, "num_days must be > 0")
+    result = await asyncio.to_thread(
+        db_create_plan, body.plan_name, body.num_days, body.subjects
+    )
+    return result
+
+@api_router.delete("/plans/{plan_id}")
+async def delete_plan(plan_id: int):
+    await asyncio.to_thread(db_delete_plan, plan_id)
+    return {"status": "success"}
+
+@api_router.post("/subjects")
+async def create_subject(body: SubjectCreateRequest):
+    if not body.subject_name.strip():
+        raise HTTPException(400, "Subject name is required")
+    result = await asyncio.to_thread(
+        db_create_subject, body.plan_id, body.subject_name, body.chapters
+    )
+    return result
+
+@api_router.delete("/subjects/{subject_id}")
+async def delete_subject(subject_id: str):
+    await asyncio.to_thread(db_delete_subject, subject_id)
+    return {"status": "success"}
+
+@api_router.post("/chapters")
+async def create_chapter(body: ChapterCreateRequest):
+    from datetime import datetime
+    if not body.chapter_name.strip():
+        raise HTTPException(400, "Chapter name is required")
+    try:
+        dl = datetime.fromisoformat(body.deadline)
+        if dl < datetime.now():
+            raise HTTPException(400, "Deadline must be in the future")
+    except ValueError:
+        raise HTTPException(400, "Invalid deadline format")
+    result = await asyncio.to_thread(
+        db_create_chapter, body.subject_id, body.chapter_name, body.deadline
+    )
+    return result
+
+@api_router.delete("/chapters/{chapter_id}")
+async def delete_chapter(chapter_id: int):
+    await asyncio.to_thread(db_delete_chapter, chapter_id)
+    return {"status": "success"}
 
 app.include_router(api_router, prefix="/api")
 

@@ -351,7 +351,10 @@ if run_auth_system():
     for idx, msg in enumerate(messages):
         if isinstance(msg, HumanMessage):
             with st.chat_message("user"):
-                st.markdown(msg.content)
+                content = msg.content
+                if "You MUST ensure the response is:" in content:
+                    content = content.split("You MUST ensure the response is:")[0].strip()
+                st.markdown(content)
         elif isinstance(msg, AIMessage):
             content = str(msg.content).strip()
             if not content: continue
@@ -372,12 +375,24 @@ if run_auth_system():
                             db.save_chat_download_path(active_tid, saved_path)
                             if append_to_pdf(saved_path, user_query, content):
                                 st.toast(f"✅ Appended!", icon="📄")
+                    if st.session_state.rag_mode:
+                        user_kw = st.text_input("Deep Dive Keyword", key=f"kw_{idx}")
+                        if st.button("Explain", key=f"explain_{idx}"):
+                            st.session_state.explain_trigger = user_kw.strip()
+                            st.rerun()
 
     # --------------------------------------------------
     # INPUT FLOW
     # --------------------------------------------------
-    user_input = st.chat_input("Type message...")
-    final_input = (st.session_state.agent.transcribe_audio(audio_data["bytes"]) if audio_data else None) or user_input
+    force_web_agent = False
+    if st.session_state.get("explain_trigger"):
+        term = st.session_state.explain_trigger
+        final_input = f"Explain the keyword: {term}\n\nYou MUST ensure the response is:\n- Student-friendly tone\n- Includes required bullet points\n- Format: Definition/Explanation/Example"
+        st.session_state.explain_trigger = None
+        force_web_agent = True
+    else:
+        user_input = st.chat_input("Type message...")
+        final_input = (st.session_state.agent.transcribe_audio(audio_data["bytes"]) if audio_data else None) or user_input
 
     if final_input:
         if st.session_state.rag_mode and "active_rag_hash" not in st.session_state:
@@ -386,7 +401,10 @@ if run_auth_system():
             st.rerun()
         else:
             with st.chat_message("user"):
-                st.markdown(final_input)
+                display_input = final_input
+                if "You MUST ensure the response is:" in display_input:
+                    display_input = display_input.split("You MUST ensure the response is:")[0].strip()
+                st.markdown(display_input)
 
             with st.chat_message("assistant"):
                 placeholder = st.empty()
@@ -394,7 +412,7 @@ if run_auth_system():
                     db.save_chat_thread(active_tid, generate_chat_title(final_input))
 
                 with st.status("Thinking...", expanded=False) as status:
-                    if st.session_state.rag_mode:
+                    if st.session_state.rag_mode and not force_web_agent:
                         status.update(label="Searching PDF...", state="running")
                         full_response = ask_pdf(final_input)
                         st.session_state.agent.chatbot.update_state(

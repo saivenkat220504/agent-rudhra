@@ -256,6 +256,13 @@ export default function Sidebar({
           </div>
 
           <button
+            className="tool-btn plan-study-btn"
+            onClick={() => window.location.href = "/plan-study"}
+          >
+            📚 Plan &amp; Study
+          </button>
+
+          <button
             className="tool-btn"
             onClick={() => alert("MCP Servers: local_calendar, filesystem — Active ✅")}
           >

@@ -154,8 +154,15 @@ export default function ChatArea({ threadId, onTitleGenerated, ragMode, ragHash 
     }
   };
 
-  const handleSend = async () => {
-    const text = input.trim();
+  const handleExplainKeyword = (keyword) => {
+    const term = keyword.trim();
+    if (!term || streaming) return;
+    const finalInput = `Explain the keyword: ${term}\n\nYou MUST ensure the response is:\n- Student-friendly tone\n- Includes required bullet points\n- Format: Definition/Explanation/Example`;
+    handleSend(finalInput, true);
+  };
+
+  const handleSend = async (textOverride = null, forceWebAgent = false) => {
+    const text = typeof textOverride === 'string' ? textOverride : input.trim();
     if (!text && !imageBase64 || streaming) return;
 
     const userMsg = {
@@ -164,7 +171,9 @@ export default function ChatArea({ threadId, onTitleGenerated, ragMode, ragHash 
       previewImage: imagePreview  // store local preview for display
     };
     setMessages((prev) => [...prev, userMsg]);
-    setInput("");
+    if (typeof textOverride !== 'string') {
+      setInput("");
+    }
     setStreamText("");
     setStreaming(true);
     startTimer();
@@ -179,7 +188,7 @@ export default function ChatArea({ threadId, onTitleGenerated, ragMode, ragHash 
     }, TIMEOUT_MS);
 
     try {
-      if (ragMode && ragHash) {
+      if (ragMode && ragHash && !forceWebAgent) {
         let ragResponse = "";
         await sendRagQuery(
           threadId,
@@ -349,6 +358,8 @@ export default function ChatArea({ threadId, onTitleGenerated, ragMode, ragHash 
               threadId={threadId}
               previewImage={msg.previewImage}
               question={idx > 0 && messages[idx-1].role === "user" ? messages[idx-1].content : null}
+              ragMode={ragMode}
+              onExplain={handleExplainKeyword}
             />
           ))}
 
@@ -358,6 +369,8 @@ export default function ChatArea({ threadId, onTitleGenerated, ragMode, ragHash 
               content={streamText} 
               threadId={threadId} 
               question={messages.length > 0 && messages[messages.length-1].role === "user" ? messages[messages.length-1].content : null}
+              ragMode={ragMode}
+              onExplain={handleExplainKeyword}
             />
           )}
 

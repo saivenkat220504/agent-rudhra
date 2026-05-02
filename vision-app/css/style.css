@@ -1,0 +1,240 @@
+/* ═══════════════════════════════════════════════════════
+   VISION APP – Cyberpunk / Neon Design System
+   ═══════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Inter:wght@300;400;500;600&display=swap');
+
+:root {
+  --bg-deep: #0a0a12;
+  --bg-card: rgba(15, 15, 30, 0.85);
+  --neon-cyan: #00f0ff;
+  --neon-magenta: #ff00e6;
+  --neon-violet: #8b5cf6;
+  --neon-green: #39ff14;
+  --neon-orange: #ff6b00;
+  --text-primary: #e0e6ff;
+  --text-secondary: rgba(224, 230, 255, 0.55);
+  --glass-border: rgba(0, 240, 255, 0.12);
+  --glow-cyan: 0 0 20px rgba(0, 240, 255, 0.4);
+  --glow-magenta: 0 0 20px rgba(255, 0, 230, 0.4);
+  --radius: 16px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg-deep);
+  font-family: 'Inter', sans-serif;
+  color: var(--text-primary);
+}
+
+/* ─── Main Container ─── */
+#app-container {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at 50% 80%, rgba(139, 92, 246, 0.08) 0%, transparent 60%),
+              radial-gradient(ellipse at 20% 30%, rgba(0, 240, 255, 0.05) 0%, transparent 50%),
+              var(--bg-deep);
+}
+
+/* ─── Video + Canvas Stack ─── */
+#video-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  max-width: 1280px;
+  max-height: 720px;
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: 0 0 60px rgba(0, 240, 255, 0.08),
+              0 8px 32px rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--glass-border);
+}
+
+#camera-feed {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scaleX(-1);
+  display: block;
+}
+
+#render-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  transform: scaleX(-1);
+}
+
+/* ─── Top HUD Bar ─── */
+#hud-bar {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 24px;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 40px;
+  box-shadow: var(--glow-cyan);
+}
+
+#hud-bar .logo {
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 3px;
+  background: linear-gradient(135deg, var(--neon-cyan), var(--neon-magenta));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  text-transform: uppercase;
+}
+
+.hud-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--glass-border);
+}
+
+.hud-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.hud-stat .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neon-green);
+  box-shadow: 0 0 8px var(--neon-green);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.hud-stat .dot.inactive {
+  background: #555;
+  box-shadow: none;
+  animation: none;
+}
+
+.hud-stat .value {
+  color: var(--neon-cyan);
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ─── Bottom Info ─── */
+#bottom-bar {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  background: var(--bg-card);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  border-radius: 30px;
+  font-size: 12px;
+}
+
+#tension-label {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--neon-cyan);
+  letter-spacing: 1px;
+  min-width: 120px;
+  text-align: center;
+}
+
+#tension-bar-wrapper {
+  width: 180px;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+
+#tension-bar {
+  height: 100%;
+  width: 0%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--neon-cyan), var(--neon-magenta));
+  transition: width 0.15s ease-out;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.3);
+}
+
+/* ─── Loading Overlay ─── */
+#loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  background: var(--bg-deep);
+  transition: opacity 0.6s ease;
+}
+
+#loading-overlay.hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid rgba(0, 240, 255, 0.15);
+  border-top-color: var(--neon-cyan);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#loading-text {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 13px;
+  letter-spacing: 3px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+/* ─── Responsive ─── */
+@media (max-width: 768px) {
+  #hud-bar { padding: 8px 16px; gap: 10px; }
+  #hud-bar .logo { font-size: 11px; letter-spacing: 2px; }
+  .hud-stat { font-size: 10px; }
+  #bottom-bar { padding: 6px 14px; }
+  #tension-bar-wrapper { width: 120px; }
+}

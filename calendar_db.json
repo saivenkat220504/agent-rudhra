@@ -4,14 +4,14 @@
         "event_time": "2026-05-01 10:00:00",
         "description": "Testing"
     },
-    "70df0c4d": {
-        "title": "Movie Discussion",
-        "event_time": "2026-04-10 18:00:00",
-        "description": "A discussion on the impact of movies on society, exploring cultural reflections, social commentary, and emotional connections."
+    "a7cb291e": {
+        "title": "Internal Exam",
+        "event_time": "2026-04-26 19:00:00",
+        "description": ""
     },
-    "a63188e7": {
-        "title": "Project Presentation",
-        "event_time": "2026-04-06 15:00:00",
-        "description": "Presentation of the project."
+    "6c3e3f33": {
+        "title": "Project Meeting",
+        "event_time": "2026-04-26 19:20:00",
+        "description": ""
     }
 }
